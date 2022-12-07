@@ -7,6 +7,7 @@ import os
 import random
 import shutil
 import time
+import urllib
 from itertools import repeat
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -127,15 +128,25 @@ class _RepeatSampler(object):
 
 class LoadImages:  # for inference
     def __init__(self, path, img_size=640, stride=32):
-        p = str(Path(path).absolute())  # os-agnostic absolute path
-        if '*' in p:
-            files = sorted(glob.glob(p, recursive=True))  # glob
-        elif os.path.isdir(p):
-            files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
-        elif os.path.isfile(p):
-            files = [p]  # files
+        if type(path) == (type([])):
+            files = path
+            self.is_link = True
+
         else:
-            raise Exception(f'ERROR: {p} does not exist')
+            self.is_link = path.lower().startswith('https://') or path.lower().startswith('http://')
+            if self.is_link:
+                p = path
+            else:
+                p = str(Path(path).absolute())  # os-agnostic absolute path
+
+            if '*' in p:
+                files = sorted(glob.glob(p, recursive=True))  # glob
+            elif os.path.isdir(p):
+                files = sorted(glob.glob(os.path.join(p, '*.*')))  # dir
+            elif os.path.isfile(p) or self.is_link:
+                files = [p]  # files
+            else:
+                raise Exception(f'ERROR: {p} does not exist')
 
         images = [x for x in files if x.split('.')[-1].lower() in img_formats]
         videos = [x for x in files if x.split('.')[-1].lower() in vid_formats]
@@ -183,9 +194,15 @@ class LoadImages:  # for inference
         else:
             # Read image
             self.count += 1
-            img0 = cv2.imread(path)  # BGR
+            if self.is_link:
+                req = urllib.request.urlopen(path)
+                arr = np.asarray(bytearray(req.read()), dtype=np.uint8)
+                img0 = cv2.imdecode(arr, -1)  # 'Load it as it is'
+            else:
+                img0 = cv2.imread(path)  # BGR
+
             assert img0 is not None, 'Image Not Found ' + path
-            #print(f'image {self.count}/{self.nf} {path}: ', end='')
+            # print(f'image {self.count}/{self.nf} {path}: ', end='')
 
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
@@ -201,9 +218,8 @@ class LoadImages:  # for inference
         self.cap = cv2.VideoCapture(path)
         self.nframes = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
-    def __len__(self):
+    def len(self):
         return self.nf  # number of files
-
 
 class LoadWebcam:  # for inference
     def __init__(self, pipe='0', img_size=640, stride=32):
