@@ -39,7 +39,6 @@ def detect(opt, movie_ids):
 
     # Get names
     names = model.module.names if hasattr(model, 'module') else model.names
-
     # Run inference
     if device.type != 'cpu':
         model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
@@ -114,10 +113,6 @@ def detect(opt, movie_ids):
     return json_object
 
 
-def detector():
-    return "s"
-
-
 def detect_main(data, movie_ids):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
@@ -127,7 +122,7 @@ def detect_main(data, movie_ids):
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='0', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', default="false", action='store_true', help='display results')
     parser.add_argument('--save-txt', default="true", action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', default="true", action='store_true',
@@ -142,7 +137,6 @@ def detect_main(data, movie_ids):
     parser.add_argument('--exist-ok', action='store_true', help='existing project/name ok, do not increment')
     parser.add_argument('--no-trace', action='store_true', help='don`t trace model')
     opt = parser.parse_args()
-    print(opt)
     # check_requirements(exclude=('pycocotools', 'thop'))
 
     with torch.no_grad():
@@ -154,6 +148,12 @@ def detect_main(data, movie_ids):
             results = detect(opt, movie_ids)
 
     return results
+
+
+def find_labels():
+    device = select_device()
+    model = attempt_load('yolov7/yolov7.pt', map_location=device)
+    return model.names
 
 
 if __name__ == '__main__':
