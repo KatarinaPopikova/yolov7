@@ -16,7 +16,7 @@ from utils.general import check_img_size, check_requirements, check_imshow, non_
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 
-def detect(opt, movie_ids):
+def detect(opt, movie_ids, categories):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
 
     # Initialize
@@ -83,28 +83,25 @@ def detect(opt, movie_ids):
                 "det": []
             }
 
-            detection["results"].append(current_img)
-
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
-
+                successful_det = False
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    current_img["det"].append({
-                        "label": names[int(cls)],
-                        "box": xywh,
-                        "conf": float(conf)
-                    })
+                    print(names[int(cls)])
+                    if names[int(cls)] in categories:
+                        successful_det = True
+                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                        current_img["det"].append({
+                            "label": names[int(cls)],
+                            "box": xywh,
+                            "conf": float(conf)
+                        })
+                if successful_det:
+                    detection["results"].append(current_img)
 
-            else:
-                current_img["det"].append({
-                    "label": "",
-                    "box": [-1, -1, -1, -1],
-                    "conf": 0
-                })
         poster_id_index += 1
 
     detection["results"] = sorted(detection['results'], key=lambda x: (max(image_det['conf'] for image_det in
@@ -113,7 +110,7 @@ def detect(opt, movie_ids):
     return json_object
 
 
-def detect_main(data, movie_ids):
+def detect_main(data, movie_ids, categories):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str,
@@ -142,10 +139,10 @@ def detect_main(data, movie_ids):
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov7.pt']:
-                results = detect(opt, movie_ids)
+                results = detect(opt, movie_ids, categories)
                 strip_optimizer(opt.weights, movie_ids)
         else:
-            results = detect(opt, movie_ids)
+            results = detect(opt, movie_ids, categories)
 
     return results
 
