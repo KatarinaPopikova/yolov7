@@ -1,4 +1,5 @@
 import sys
+import copy
 
 sys.path.insert(0, 'yolov7')
 sys.argv = ['']
@@ -47,8 +48,12 @@ def detect(opt, movie_ids, categories):
 
     detection = {"results": []}
 
-    poster_id_index = 0
+    poster_id_index = -1
     for path, img, im0s, vid_cap in dataset:
+        poster_id_index += 1
+        if img is None:
+            continue
+
         img = torch.from_numpy(img).to(device)
         img = img.half() if half else img.float()  # uint8 to fp16/32
         img /= 255.0  # 0 - 255 to 0.0 - 1.0
@@ -85,13 +90,14 @@ def detect(opt, movie_ids, categories):
 
             gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
             if len(det):
-                successful_det = False
+                must_detect_categories = copy.deepcopy(categories)
                 # Rescale boxes from img_size to im0 size
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                    print(names[int(cls)])
                     if names[int(cls)] in categories:
+                        if names[int(cls)] in must_detect_categories:
+                            must_detect_categories.remove(names[int(cls)])
                         successful_det = True
                         xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                         current_img["det"].append({
@@ -99,10 +105,8 @@ def detect(opt, movie_ids, categories):
                             "box": xywh,
                             "conf": float(conf)
                         })
-                if successful_det:
+                if len(must_detect_categories) == 0:
                     detection["results"].append(current_img)
-
-        poster_id_index += 1
 
     detection["results"] = sorted(detection['results'], key=lambda x: (max(image_det['conf'] for image_det in
                                                                            x['det'])), reverse=True)

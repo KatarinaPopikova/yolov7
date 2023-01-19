@@ -207,6 +207,8 @@ class LoadImages:  # for inference
         # Padded resize
         img = letterbox(img0, self.img_size, stride=self.stride)[0]
 
+        if len(img.shape) == 2:
+            return path, None, img0, self.cap
         # Convert
         img = img[:, :, ::-1].transpose(2, 0, 1)  # BGR to RGB, to 3x416x416
         img = np.ascontiguousarray(img)
