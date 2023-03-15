@@ -17,7 +17,7 @@ from utils.general import check_img_size, check_requirements, check_imshow, non_
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 
-def detect(opt, movie_ids, categories):
+def detect(opt, movie_ids, categories, confidence):
     source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
 
     # Initialize
@@ -95,7 +95,7 @@ def detect(opt, movie_ids, categories):
                 det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
-                    if names[int(cls)] in categories:
+                    if names[int(cls)] in categories and float(conf) >= confidence:
                         if names[int(cls)] in must_detect_categories:
                             must_detect_categories.remove(names[int(cls)])
                         successful_det = True
@@ -114,7 +114,7 @@ def detect(opt, movie_ids, categories):
     return json_object
 
 
-def detect_main(data, movie_ids, categories):
+def detect_main(data, movie_ids, categories, confidence):
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str,
@@ -143,10 +143,10 @@ def detect_main(data, movie_ids, categories):
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov7.pt']:
-                results = detect(opt, movie_ids, categories)
+                results = detect(opt, movie_ids, categories, confidence)
                 strip_optimizer(opt.weights, movie_ids)
         else:
-            results = detect(opt, movie_ids, categories)
+            results = detect(opt, movie_ids, categories, confidence)
 
     return results
 
