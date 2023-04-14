@@ -18,7 +18,7 @@ from utils.torch_utils import select_device, load_classifier, time_synchronized,
 
 
 def detect(opt, movie_ids, categories, confidence):
-    source, weights, view_img, save_txt, imgsz, trace = opt.source, opt.weights, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
+    source, weights_coco, weights_custom, view_img, save_txt, imgsz, trace = opt.source, opt.weights1, opt.weights2, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
 
     # Initialize
     set_logging()
@@ -26,23 +26,39 @@ def detect(opt, movie_ids, categories, confidence):
     half = device.type != 'cpu'  # half precision only supported on CUDA
 
     # Load model
-    model = attempt_load(weights, map_location=device)  # load FP32 model
+    model = attempt_load(weights_coco, map_location=device)  # load FP32 model
+    model_custom = attempt_load(weights_custom, map_location=device)  # load FP32 model
     stride = int(model.stride.max())  # model stride
     imgsz = check_img_size(imgsz, s=stride)  # check img_size
 
+    # Get names
+    names_coco = model.module.names if hasattr(model, 'module') else model.names
+    names_custom = model.module.names if hasattr(model_custom, 'module') else model_custom.names
+
+    intersection_categories_coco = set(names_coco) & set(categories)
+    intersection_categories_custom = set(names_custom) & set(categories)
+
     if trace:
-        model = TracedModel(model, device, opt.img_size)
+        if len(intersection_categories_coco):
+            model = TracedModel(model, device, opt.img_size)
+        if len(intersection_categories_custom):
+            model_custom = TracedModel(model_custom, device, opt.img_size)
 
     if half:
-        model.half()  # to FP16
+        if len(intersection_categories_coco):
+            model.half()  # to FP16
+        if len(intersection_categories_custom):
+            model_custom.half()
 
     dataset = LoadImages(source, img_size=imgsz, stride=stride)
 
-    # Get names
-    names = model.module.names if hasattr(model, 'module') else model.names
     # Run inference
     if device.type != 'cpu':
-        model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))  # run once
+        if len(intersection_categories_coco):
+            model(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model.parameters())))
+        if len(intersection_categories_custom):
+            model_custom(torch.zeros(1, 3, imgsz, imgsz).to(device).type_as(next(model_custom.parameters())))
+
     old_img_w = old_img_h = imgsz
     old_img_b = 1
 
@@ -67,46 +83,50 @@ def detect(opt, movie_ids, categories, confidence):
             old_img_h = img.shape[2]
             old_img_w = img.shape[3]
             for i in range(3):
-                model(img, augment=opt.augment)[0]
+                if len(intersection_categories_coco):
+                    model(img, augment=opt.augment)[0]
+                if len(intersection_categories_custom):
+                    model_custom(img, augment=opt.augment)[0]
 
         # Inference
         with torch.no_grad():  # Calculating gradients would cause a GPU memory leak
-            pred = model(img, augment=opt.augment)[0]
+            if len(intersection_categories_coco):
+                pred = model(img, augment=opt.augment)[0]
+            if len(intersection_categories_custom):
+                pred_custom = model_custom(img, augment=opt.augment)[0]
 
-        # Apply NMS
-        pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes, agnostic=opt.agnostic_nms)
+        p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
+        p = Path(p)  # to Path
+        save_path = '/' + p.name  # img.jpg
 
-        # Process detections
-        for i, det in enumerate(pred):  # detections per image
-            p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
-            p = Path(p)  # to Path
-            save_path = '/' + p.name  # img.jpg
+        current_img = {
+            "poster_path": save_path,
+            "id": movie_ids[poster_id_index],
+            "det": []
+        }
 
-            current_img = {
-                "poster_path": save_path,
-                "id": movie_ids[poster_id_index],
-                "det": []
-            }
+        if len(intersection_categories_coco):
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes,
+                                       agnostic=opt.agnostic_nms)
+            coco_det = process_detection(pred, path, im0s, dataset,
+                                         intersection_categories_coco, img,
+                                         names_coco, confidence)
+            if not coco_det:
+                continue
+            current_img["det"] += coco_det
 
-            gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
-            if len(det):
-                must_detect_categories = copy.deepcopy(categories)
-                # Rescale boxes from img_size to im0 size
-                det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
-                # Write results
-                for *xyxy, conf, cls in reversed(det):
-                    if names[int(cls)] in categories and float(conf) >= confidence:
-                        if names[int(cls)] in must_detect_categories:
-                            must_detect_categories.remove(names[int(cls)])
-                        successful_det = True
-                        xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                        current_img["det"].append({
-                            "label": names[int(cls)],
-                            "box": xywh,
-                            "conf": float(conf)
-                        })
-                if len(must_detect_categories) == 0:
-                    detection["results"].append(current_img)
+        if len(intersection_categories_custom):
+            pred_custom = non_max_suppression(pred_custom, opt.conf_thres, opt.iou_thres,
+                                              classes=opt.classes, agnostic=opt.agnostic_nms)
+
+            custom_det = process_detection(pred_custom, path, im0s, dataset,
+                                           intersection_categories_custom, img,
+                                           names_custom, confidence)
+            if not custom_det:
+                continue
+            current_img["det"] += custom_det
+
+        detection["results"].append(current_img)
 
     detection["results"] = sorted(detection['results'], key=lambda x: (max(image_det['conf'] for image_det in
                                                                            x['det'])), reverse=True)
@@ -114,9 +134,40 @@ def detect(opt, movie_ids, categories, confidence):
     return json_object
 
 
+def process_detection(pred, path, im0s, dataset, categories, img, names, confidence):
+    detections = []
+    must_detect_categories = copy.deepcopy(categories)
+    # Process detections
+    for i, det in enumerate(pred):  # detections per image
+        p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
+        p = Path(p)  # to Path
+        save_path = '/' + p.name  # img.jpg
+
+        gn = torch.tensor(im0.shape)[[1, 0, 1, 0]]  # normalization gain whwh
+        if len(det):
+            # Rescale boxes from img_size to im0 size
+            det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
+            # Write results
+            for *xyxy, conf, cls in reversed(det):
+                if names[int(cls)] in categories and float(conf) >= confidence:
+                    if names[int(cls)] in must_detect_categories:
+                        must_detect_categories.remove(names[int(cls)])
+                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                    detections.append({
+                        "label": names[int(cls)],
+                        "box": xywh,
+                        "conf": float(conf)
+                    })
+    if len(must_detect_categories) == 0:
+        return detections
+    return []
+
+
+
 def detect_main(data, movie_ids, categories, confidence):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--weights', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
+    parser.add_argument('--weights1', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
+    parser.add_argument('--weights2', nargs='+', type=str, default='yolov7/custom.pt', help='model.pt path(s)')
     parser.add_argument('--source', type=str,
                         default=data,
                         help='source')  # file/folder, 0 for webcam
@@ -153,8 +204,9 @@ def detect_main(data, movie_ids, categories, confidence):
 
 def find_labels():
     device = select_device()
-    model = attempt_load('yolov7/yolov7.pt', map_location=device)
-    return model.names
+    model_coco = attempt_load('yolov7/yolov7.pt', map_location=device)
+    model_custom = attempt_load('yolov7/custom.pt', map_location=device) or []
+    return model_coco.names + model_custom.names
 
 
 if __name__ == '__main__':
