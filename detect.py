@@ -17,7 +17,7 @@ from utils.general import check_img_size, check_requirements, check_imshow, non_
 from utils.torch_utils import select_device, load_classifier, time_synchronized, TracedModel
 
 
-def detect(opt, movie_ids, categories, confidence):
+def detect(opt, movies, categories):
     source, weights_coco, weights_custom, view_img, save_txt, imgsz, trace = opt.source, opt.weights1, opt.weights2, opt.view_img, opt.save_txt, opt.img_size, not opt.no_trace
 
     # Initialize
@@ -35,8 +35,17 @@ def detect(opt, movie_ids, categories, confidence):
     names_coco = model.module.names if hasattr(model, 'module') else model.names
     names_custom = model.module.names if hasattr(model_custom, 'module') else model_custom.names
 
-    intersection_categories_coco = set(names_coco) & set(categories)
-    intersection_categories_custom = set(names_custom) & set(categories)
+    if categories:
+        intersection_categories_coco = set(names_coco) & set(categories)
+        intersection_categories_custom = set(names_custom) & set(categories)
+
+        classes_coco = [names_coco.index(name) for name in intersection_categories_coco]
+        classes_custom = [names_custom.index(name) for name in intersection_categories_custom]
+    else:
+        intersection_categories_coco = names_coco
+        intersection_categories_custom = names_custom
+
+        classes_coco = classes_custom = opt.classes
 
     if trace:
         if len(intersection_categories_coco):
@@ -62,7 +71,7 @@ def detect(opt, movie_ids, categories, confidence):
     old_img_w = old_img_h = imgsz
     old_img_b = 1
 
-    detection = {"results": []}
+    detection = []
 
     poster_id_index = -1
     for path, img, im0s, vid_cap in dataset:
@@ -82,6 +91,7 @@ def detect(opt, movie_ids, categories, confidence):
             old_img_b = img.shape[0]
             old_img_h = img.shape[2]
             old_img_w = img.shape[3]
+            old_img_w = img.shape[3]
             for i in range(3):
                 if len(intersection_categories_coco):
                     model(img, augment=opt.augment)[0]
@@ -99,44 +109,40 @@ def detect(opt, movie_ids, categories, confidence):
         p = Path(p)  # to Path
         save_path = '/' + p.name  # img.jpg
 
-        current_img = {
-            "poster_path": save_path,
-            "id": movie_ids[poster_id_index],
-            "det": []
-        }
+        det = []
 
         if len(intersection_categories_coco):
-            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=opt.classes,
+            pred = non_max_suppression(pred, opt.conf_thres, opt.iou_thres, classes=classes_coco,
                                        agnostic=opt.agnostic_nms)
             coco_det = process_detection(pred, path, im0s, dataset,
                                          intersection_categories_coco, img,
-                                         names_coco, confidence)
+                                         names_coco)
             if not coco_det:
                 continue
-            current_img["det"] += coco_det
+            det += coco_det
 
         if len(intersection_categories_custom):
             pred_custom = non_max_suppression(pred_custom, opt.conf_thres, opt.iou_thres,
-                                              classes=opt.classes, agnostic=opt.agnostic_nms)
+                                              classes=classes_custom, agnostic=opt.agnostic_nms)
 
             custom_det = process_detection(pred_custom, path, im0s, dataset,
                                            intersection_categories_custom, img,
-                                           names_custom, confidence)
+                                           names_custom)
             if not custom_det:
                 continue
-            current_img["det"] += custom_det
+            det += custom_det
 
-        detection["results"].append(current_img)
+        movies[poster_id_index]["det"] = det
+        detection.append(movies[poster_id_index])
 
-    detection["results"] = sorted(detection['results'], key=lambda x: (max(image_det['conf'] for image_det in
-                                                                           x['det'])), reverse=True)
-    json_object = json.dumps(detection, indent=4)
-    return json_object
+    if categories:
+        detection = sorted(detection, key=lambda x: (max(image_det['conf'] for image_det in x['det'])), reverse=True)
+    return detection
 
 
-def process_detection(pred, path, im0s, dataset, categories, img, names, confidence):
+def process_detection(pred, path, im0s, dataset, categories, img, names):
     detections = []
-    must_detect_categories = copy.deepcopy(categories)
+    must_detect_categories = copy.deepcopy(categories) if categories else None
     # Process detections
     for i, det in enumerate(pred):  # detections per image
         p, s, im0, frame = path, '', im0s, getattr(dataset, 'frame', 0)
@@ -149,19 +155,17 @@ def process_detection(pred, path, im0s, dataset, categories, img, names, confide
             det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
             # Write results
             for *xyxy, conf, cls in reversed(det):
-                if names[int(cls)] in categories and float(conf) >= confidence:
-                    if names[int(cls)] in must_detect_categories:
-                        must_detect_categories.remove(names[int(cls)])
-                    xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
-                    detections.append({
-                        "label": names[int(cls)],
-                        "box": xywh,
-                        "conf": float(conf)
-                    })
-    if len(must_detect_categories) == 0:
+                if must_detect_categories and names[int(cls)] in must_detect_categories:
+                    must_detect_categories.remove(names[int(cls)])
+                xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
+                detections.append({
+                    "label": names[int(cls)],
+                    "box": xywh,
+                    "conf": float(conf)
+                })
+    if not must_detect_categories or len(must_detect_categories) == 0:
         return detections
     return []
-
 
 
 def detect_main(data, movie_ids, categories, confidence):
@@ -172,7 +176,7 @@ def detect_main(data, movie_ids, categories, confidence):
                         default=data,
                         help='source')  # file/folder, 0 for webcam
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
-    parser.add_argument('--conf-thres', type=float, default=0.25, help='object confidence threshold')
+    parser.add_argument('--conf-thres', type=float, default=confidence, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
     parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', default="false", action='store_true', help='display results')
@@ -194,10 +198,10 @@ def detect_main(data, movie_ids, categories, confidence):
     with torch.no_grad():
         if opt.update:  # update all models (to fix SourceChangeWarning)
             for opt.weights in ['yolov7.pt']:
-                results = detect(opt, movie_ids, categories, confidence)
+                results = detect(opt, movie_ids, categories)
                 strip_optimizer(opt.weights, movie_ids)
         else:
-            results = detect(opt, movie_ids, categories, confidence)
+            results = detect(opt, movie_ids, categories)
 
     return results
 
