@@ -116,7 +116,7 @@ def detect(opt, movies, categories):
                                        agnostic=opt.agnostic_nms)
             coco_det = process_detection(pred, path, im0s, dataset,
                                          intersection_categories_coco, img,
-                                         names_coco)
+                                         names_coco, categories is None)
             if not coco_det:
                 continue
             det += coco_det
@@ -127,7 +127,7 @@ def detect(opt, movies, categories):
 
             custom_det = process_detection(pred_custom, path, im0s, dataset,
                                            intersection_categories_custom, img,
-                                           names_custom)
+                                           names_custom, categories is None)
             if not custom_det:
                 continue
             det += custom_det
@@ -140,7 +140,7 @@ def detect(opt, movies, categories):
     return detection
 
 
-def process_detection(pred, path, im0s, dataset, categories, img, names):
+def process_detection(pred, path, im0s, dataset, categories, img, names, database):
     detections = []
     must_detect_categories = copy.deepcopy(categories) if categories else None
     # Process detections
@@ -155,7 +155,7 @@ def process_detection(pred, path, im0s, dataset, categories, img, names):
             det[:, :4] = scale_coords(img.shape[2:], det[:, :4], im0.shape).round()
             # Write results
             for *xyxy, conf, cls in reversed(det):
-                if must_detect_categories and names[int(cls)] in must_detect_categories:
+                if (not database) and must_detect_categories and names[int(cls)] in must_detect_categories:
                     must_detect_categories.remove(names[int(cls)])
                 xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                 detections.append({
@@ -163,7 +163,7 @@ def process_detection(pred, path, im0s, dataset, categories, img, names):
                     "box": xywh,
                     "conf": float(conf)
                 })
-    if not must_detect_categories or len(must_detect_categories) == 0:
+    if database or len(must_detect_categories) == 0:
         return detections
     return []
 
