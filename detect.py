@@ -159,6 +159,7 @@ def process_detection(pred, path, im0s, dataset, categories, img, names, databas
                     must_detect_categories.remove(names[int(cls)])
                 xywh = (xyxy2xywh(torch.tensor(xyxy).view(1, 4)) / gn).view(-1).tolist()  # normalized xywh
                 detections.append({
+                    "model": "yolov7",
                     "label": names[int(cls)],
                     "box": xywh,
                     "conf": float(conf)
