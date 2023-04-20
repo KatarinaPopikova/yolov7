@@ -170,6 +170,7 @@ def process_detection(pred, path, im0s, dataset, categories, img, names, databas
 
 
 def detect_main(data, movie_ids, categories, confidence):
+
     parser = argparse.ArgumentParser()
     parser.add_argument('--weights1', nargs='+', type=str, default='yolov7/yolov7.pt', help='model.pt path(s)')
     parser.add_argument('--weights2', nargs='+', type=str, default='yolov7/custom.pt', help='model.pt path(s)')
