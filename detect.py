@@ -132,6 +132,8 @@ def detect(opt, movies, categories):
                 continue
             det += custom_det
 
+        if movies is None:
+            return det
         movies[poster_id_index]["det"] = det
         detection.append(movies[poster_id_index])
 
