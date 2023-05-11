@@ -182,7 +182,7 @@ def detect_main(data, movie_ids, categories, confidence):
     parser.add_argument('--img-size', type=int, default=640, help='inference size (pixels)')
     parser.add_argument('--conf-thres', type=float, default=confidence, help='object confidence threshold')
     parser.add_argument('--iou-thres', type=float, default=0.45, help='IOU threshold for NMS')
-    parser.add_argument('--device', default='', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
+    parser.add_argument('--device', default='cpu', help='cuda device, i.e. 0 or 0,1,2,3 or cpu')
     parser.add_argument('--view-img', default="false", action='store_true', help='display results')
     parser.add_argument('--save-txt', default="true", action='store_true', help='save results to *.txt')
     parser.add_argument('--save-conf', default="true", action='store_true',
